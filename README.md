@@ -155,6 +155,72 @@ v4l2ctl: power_line_frequency=2,focus_absolute=250,focus_automatic_continuous=0,
 
 Simply copy this line and paste it into your crowsnest camera configuration to preserve your current settings.
 
+### Crowsnest Configurator
+
+Press **`c`** from the main control screen to open the interactive `crowsnest.conf` editor. It automatically finds your config at `~/printer_data/config/crowsnest.conf` (or other common locations).
+
+#### Section Picker
+
+```
+Crowsnest Config: /home/pi/printer_data/config/crowsnest.conf
+══════════════════════════════════════════════════════════════
+Select camera section to edit:
+
+> cam 1: /dev/v4l/by-id/usb-046d_0825…  1280x960@30fps
+  cam 2: /dev/v4l/by-id/usb-Suyin_HD…  640x480@30fps  [brightness=120]
+  cam 3: /dev/video0  640x480@30fps
+
+↑↓: Navigate | Enter: Edit | n: New cam | x: Delete | q: Back
+```
+
+| Key | Action |
+|-----|--------|
+| `↑↓` | Navigate between camera sections |
+| `Enter` | Open the selected section for editing |
+| `n` | Add a new `[cam N]` section (auto-numbered, port auto-incremented, pre-filled from first detected camera) |
+| `x` or `Del` | Delete the selected section (asks for confirmation) |
+| `q` / `Esc` | Return to main screen |
+
+#### Cam Editor
+
+```
+Edit [cam 1]  ←  ~/printer_data/config/crowsnest.conf
+══════════════════════════════════════════════════════
+  device      : /dev/v4l/by-id/usb-046d_0825_173921D0-video-index0  ◄/► cycle
+  path type   : by-id      (/dev/v4l/by-id/…)  [by-id / by-hardware / by-video]  ◄/► cycle
+  mode        : ustreamer  ◄/► cycle
+  port        : 8080       Enter: edit
+  resolution  : 1280x960   ◄/► cycle
+  max_fps     : 30.000     ◄/► cycle
+  v4l2ctl     :            Enter: edit  |  a: auto-fill from controls
+
+Editing [cam 1]  —  w: Save  |  q: Cancel
+↑↓: Field | ◄►: Cycle | Enter: Edit | a: Auto v4l2ctl | w: Save | q: Cancel
+```
+
+| Key | Action |
+|-----|--------|
+| `↑↓` | Move between fields |
+| `◄►` | Cycle through available values for the focused field |
+| `Enter` | Free-text edit for `port`, `v4l2ctl`, or any field |
+| `a` | Auto-fill `v4l2ctl` from the non-default controls currently loaded for the active device |
+| `w` | Save all changes back to `crowsnest.conf` (preserves all comments) |
+| `q` / `Esc` | Cancel without saving |
+
+**Field details:**
+
+- **device** — Cycles through all detected V4L2 capture devices. Changing the device automatically resets `resolution` and `max_fps` to the first values supported by that device.
+- **path type** — Switches the device path format for the currently selected device. Only shows the types that actually exist on your system:
+  - `by-id` — `/dev/v4l/by-id/usb-…` — stable across reboots, recommended for USB cameras
+  - `by-hardware` — `/dev/v4l/by-path/platform-…` — hardware bus path, stable for fixed hardware
+  - `by-video` — `/dev/video0` — simple index, can change if devices are added/removed
+- **mode** — Cycles between `ustreamer` and `camera-streamer`
+- **resolution** — Only shows resolutions actually supported by the selected device (queried live from the camera)
+- **max_fps** — Only shows frame rates available for the selected resolution
+- **v4l2ctl** — Comma-separated `control=value` pairs. Press `a` to auto-populate from all controls that differ from their default value on the currently loaded device
+
+> **Note:** Saving writes only the fields shown in the editor. All other lines in `crowsnest.conf` (comments, `enable_rtsp`, `rtsp_port`, `custom_flags`, etc.) are preserved exactly as-is.
+
 ### Presets
 
 Save and load your favorite camera configurations for quick switching between different setups.
