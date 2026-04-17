@@ -10,7 +10,7 @@ Interactive terminal-based UI for managing v4l2-ctl camera settings via SSH/PuTT
 ## Preview
 
 ```
-Device: /dev/video0 - UVC Camera (046d:0825)                    [d] Change Device | [r] Refresh | [q] Quit
+Device: /dev/video0 - UVC Camera (046d:0825)           [d] Device | [r] Refresh | [i] Info | [c] Crowsnest | [q] Quit
 ═══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 User Controls
@@ -28,7 +28,7 @@ Camera Controls
   exposure_time_absolute                336  [1-10000, step 1]     ◄●───────────────► (inactive)
   exposure_dynamic_framerate            OFF  [toggle]              [ ] ON  [●] OFF
 
-↑↓: Navigate | ←→: Adjust | Enter: Edit | Space: Toggle | 0: Default | s: Save | l: Load
+↑↓: Navigate | ←→: Adjust | Enter: Edit | Space: Toggle | 0: Default | s: Save | l: Load | i: Info | c: Crowsnest
 v4l2ctl: white_balance_automatic=0
 Set white_balance_temperature = 4000
 ```
@@ -65,8 +65,10 @@ That's it! The tool runs directly from its directory. No installation required.
 - **Live List Interface**: View all camera controls in a single scrollable list
 - **Real-time Adjustment**: Changes apply immediately as you adjust values
 - **Multiple Control Types**: Supports integer sliders, boolean toggles, and menu options
-- **Device Selection**: Choose from all available V4L2 video devices
+- **Device Selection**: Only real capture devices shown (ISP/codec/metadata nodes filtered out)
 - **Visual Feedback**: Sliders, checkboxes, and status messages for clear feedback
+- **Info Screen** (`i`): View device capabilities, supported pixel formats, resolutions, and frame rates
+- **Crowsnest Editor** (`c`): Edit `crowsnest.conf` camera sections directly — pick device path type (by-id / by-hardware / by-video), resolution, FPS, and auto-fill `v4l2ctl` from current controls
 
 ## Requirements
 
@@ -130,12 +132,14 @@ python3 v4l2_control.py
 **Control Screen:**
 - `↑↓` - Navigate between controls
 - `←→` - Adjust selected control value (applies immediately)
-  - **Hold ←→** for progressive speed: x1 → x10 → x100
+  - **Hold ←→** for progressive speed: x1 → x10 → x50
 - `Enter` - Type exact value for integer controls
 - `Space` - Toggle boolean controls (ON/OFF)
 - `0` - Reset selected control to default value
 - `s` - Save current settings as a preset
 - `l` - Load settings from a saved preset
+- `i` - Show device info screen (capabilities, supported resolutions & FPS)
+- `c` - Open Crowsnest config editor
 - `d` - Change device
 - `r` - Refresh all control values
 - `q` - Quit application
@@ -182,10 +186,10 @@ Presets are stored as JSON files and include:
 - Examples: brightness, contrast, saturation, gain, white_balance_temperature
 - Use `←→` arrows to increment/decrement by step value
 - **Progressive Speed:** Hold arrow keys for faster adjustment
-  - **First ~5 presses:** Normal speed (x1)
-  - **After ~5 presses:** Fast speed (x10)
-  - **After ~15 presses:** Very fast speed (x100)
-  - Status message shows multiplier: `(x10)` or `(x100)`
+  - **First 8 presses:** Normal speed (x1)
+  - **Presses 9–40:** Fast speed (x10)
+  - **After 40 presses:** Maximum speed (x50)
+  - Status message shows multiplier: `(x10)` or `(x50)`
 - Press `Enter` to type an exact value
 - Visual slider shows current position in range
 - Perfect for controls with large ranges (e.g., 0-10000)
