@@ -283,6 +283,50 @@ class V4L2Parser:
 
         return info
 
+    @staticmethod
+    def get_device_aliases(device_path: str) -> Dict[str, List[str]]:
+        """Return all path aliases for a device grouped by type.
+        Returns {'by-video': ['/dev/videoN'], 'by-id': [...], 'by-path': [...]}
+        """
+        aliases: Dict[str, List[str]] = {'by-video': [], 'by-id': [], 'by-path': []}
+        try:
+            real = os.path.realpath(device_path)
+        except Exception:
+            real = device_path
+        if os.path.exists(real):
+            aliases['by-video'].append(real)
+        for path_type, directory in [('by-id', '/dev/v4l/by-id'),
+                                     ('by-path', '/dev/v4l/by-path')]:
+            try:
+                for name in sorted(os.listdir(directory)):
+                    link = os.path.join(directory, name)
+                    try:
+                        if os.path.realpath(link) == real:
+                            aliases[path_type].append(link)
+                    except Exception:
+                        pass
+            except (FileNotFoundError, PermissionError):
+                pass
+        return aliases
+
+    @staticmethod
+    def build_device_map() -> List[Dict]:
+        """Return a list of dicts, one per physical video device, with all path aliases.
+        Each dict: {'real': '/dev/videoN', 'by-video': [...], 'by-id': [...], 'by-path': [...]}
+        """
+        devices = V4L2Parser.list_devices()
+        result = []
+        seen_real = set()
+        for dev in devices:
+            real = os.path.realpath(dev.path)
+            if real in seen_real:
+                continue
+            seen_real.add(real)
+            aliases = V4L2Parser.get_device_aliases(real)
+            aliases['real'] = real
+            result.append(aliases)
+        return result
+
 
 class CrowsnestConfig:
     """Parser and writer for crowsnest.conf"""
@@ -1314,20 +1358,62 @@ class V4L2UI:
 
     def _edit_crowsnest_cam(self, cfg: 'CrowsnestConfig',
                              section: str, data: Dict):
-        """Edit a single cam section with live resolution/fps pickers"""
+        """Edit a single cam section with live resolution/fps and path-type pickers"""
+        PATH_TYPES = ['by-id', 'by-path', 'by-video']
         MODES = ['ustreamer', 'camera-streamer']
-        all_devices = V4L2Parser.list_devices()
-        device_paths = [d.path for d in all_devices]
+
+        # Build physical device map (one entry per real /dev/videoN)
+        device_map = V4L2Parser.build_device_map()
+
+        def _detect_path_type(path: str) -> str:
+            if '/by-id/' in path:
+                return 'by-id'
+            if '/by-path/' in path:
+                return 'by-path'
+            return 'by-video'
+
+        def _path_for(entry: Dict, ptype: str) -> str:
+            paths = entry.get(ptype, [])
+            if paths:
+                return paths[0]
+            bv = entry.get('by-video', [])
+            return bv[0] if bv else entry.get('real', '/dev/video0')
+
+        def _find_phys_idx(path: str) -> int:
+            real = os.path.realpath(path)
+            for i, e in enumerate(device_map):
+                if e.get('real') == real:
+                    return i
+                for pt in ('by-id', 'by-path', 'by-video'):
+                    if path in e.get(pt, []):
+                        return i
+            return 0
+
+        current_path = data.get('device', '')
+        path_type = _detect_path_type(current_path)
+        phys_idx = _find_phys_idx(current_path) if device_map else 0
 
         fields = {
-            'device':     data.get('device', device_paths[0] if device_paths else '/dev/video0'),
+            'device':     current_path,
             'mode':       data.get('mode', 'ustreamer'),
             'port':       data.get('port', '8080'),
             'resolution': data.get('resolution', ''),
             'max_fps':    data.get('max_fps', '30'),
             'v4l2ctl':    data.get('v4l2ctl', ''),
         }
-        field_order = ['device', 'mode', 'port', 'resolution', 'max_fps', 'v4l2ctl']
+
+        # path_type is UI-only; not a real field key
+        FIELD_LABELS = {
+            'device':    'device',
+            'path_type': 'path type',
+            'mode':      'mode',
+            'port':      'port',
+            'resolution':'resolution',
+            'max_fps':   'max_fps',
+            'v4l2ctl':   'v4l2ctl',
+        }
+        field_order = ['device', 'path_type', 'mode', 'port',
+                       'resolution', 'max_fps', 'v4l2ctl']
         selected_field = 0
         status = f'Editing [{section}]  —  w: Save  |  q: Cancel'
 
@@ -1349,19 +1435,29 @@ class V4L2UI:
                 if y >= height - 3:
                     break
                 sel = (row == selected_field)
-                val = fields[fname]
+                label = f"  {FIELD_LABELS[fname]:<12}"
 
-                # Build picker hint
-                hint = ''
-                if sel:
-                    if fname in ('device', 'mode', 'resolution', 'max_fps'):
-                        hint = '  ◄/► cycle'
-                    if fname == 'v4l2ctl':
-                        hint = '  Enter: edit  |  a: auto-fill from controls'
-                    elif fname in ('port',):
-                        hint = '  Enter: edit'
+                if fname == 'path_type':
+                    # Show available types for current device
+                    avail = []
+                    if device_map and phys_idx < len(device_map):
+                        e = device_map[phys_idx]
+                        for pt in PATH_TYPES:
+                            if e.get(pt):
+                                avail.append(pt)
+                    val = path_type
+                    hint = f'  ({"/".join(avail)})  ◄/► cycle' if sel else ''
+                else:
+                    val = fields[fname]
+                    hint = ''
+                    if sel:
+                        if fname in ('device', 'mode', 'resolution', 'max_fps'):
+                            hint = '  ◄/► cycle'
+                        elif fname == 'v4l2ctl':
+                            hint = '  Enter: edit  |  a: auto-fill'
+                        elif fname == 'port':
+                            hint = '  Enter: edit'
 
-                label = f"  {fname:<12}"
                 line = f"{label}: {val}{hint}"
                 if sel:
                     self.stdscr.addstr(y, 0, line[:width - 1], curses.color_pair(1))
@@ -1371,7 +1467,7 @@ class V4L2UI:
             self.stdscr.addstr(height - 2, 0, status[:width - 1],
                                curses.color_pair(3))
             self.stdscr.addstr(height - 1, 0,
-                '↑↓: Field | ←►: Cycle | Enter: Edit | a: Auto v4l2ctl | w: Save | q: Cancel',
+                '↑↓: Field | ◄►: Cycle | Enter: Edit | a: Auto v4l2ctl | w: Save | q: Cancel',
                 curses.color_pair(5))
             self.stdscr.refresh()
 
@@ -1397,25 +1493,37 @@ class V4L2UI:
             elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
                 d = 1 if key == curses.KEY_RIGHT else -1
 
-                if fname == 'mode':
-                    idx = MODES.index(fields['mode']) if fields['mode'] in MODES else 0
-                    fields['mode'] = MODES[(idx + d) % len(MODES)]
+                if fname == 'device' and device_map:
+                    phys_idx = (phys_idx + d) % len(device_map)
+                    entry = device_map[phys_idx]
+                    # Keep current path_type if available, else fallback
+                    if not entry.get(path_type):
+                        for pt in PATH_TYPES:
+                            if entry.get(pt):
+                                path_type = pt
+                                break
+                    fields['device'] = _path_for(entry, path_type)
+                    formats = V4L2Parser.get_formats_and_resolutions(
+                        fields['device'])
+                    if formats and formats[0]['resolutions']:
+                        r = formats[0]['resolutions'][0]
+                        fields['resolution'] = r['size']
+                        fields['max_fps'] = r['fps'][0] if r['fps'] else '30'
 
-                elif fname == 'device':
-                    if device_paths:
+                elif fname == 'path_type' and device_map and phys_idx < len(device_map):
+                    entry = device_map[phys_idx]
+                    avail = [pt for pt in PATH_TYPES if entry.get(pt)]
+                    if avail:
                         try:
-                            idx = device_paths.index(fields['device'])
+                            idx = avail.index(path_type)
                         except ValueError:
                             idx = 0
-                        idx = (idx + d) % len(device_paths)
-                        fields['device'] = device_paths[idx]
-                        formats = V4L2Parser.get_formats_and_resolutions(
-                            fields['device'])
-                        # Reset res/fps to first available
-                        if formats and formats[0]['resolutions']:
-                            r = formats[0]['resolutions'][0]
-                            fields['resolution'] = r['size']
-                            fields['max_fps'] = r['fps'][0] if r['fps'] else '30'
+                        path_type = avail[(idx + d) % len(avail)]
+                        fields['device'] = _path_for(entry, path_type)
+
+                elif fname == 'mode':
+                    idx = MODES.index(fields['mode']) if fields['mode'] in MODES else 0
+                    fields['mode'] = MODES[(idx + d) % len(MODES)]
 
                 elif fname == 'resolution':
                     res_list = []
@@ -1430,7 +1538,6 @@ class V4L2UI:
                             idx = 0
                         idx = (idx + d) % len(res_list)
                         fields['resolution'] = res_list[idx]
-                        # Update fps for new resolution
                         for fmt in formats:
                             for r in fmt['resolutions']:
                                 if r['size'] == fields['resolution'] and r['fps']:
@@ -1453,15 +1560,17 @@ class V4L2UI:
                         fields['max_fps'] = fps_set[(idx + d) % len(fps_set)]
 
             elif key in (ord('\n'), curses.KEY_ENTER, 10):
-                if fname in ('port', 'v4l2ctl', 'device', 'resolution', 'max_fps'):
+                if fname in ('port', 'v4l2ctl', 'resolution', 'max_fps'):
                     fields[fname] = self._text_input(
                         f'Enter {fname}: ', fields[fname])
-                    if fname == 'device':
-                        formats = V4L2Parser.get_formats_and_resolutions(
-                            fields['device'])
+                elif fname == 'device':
+                    new_path = self._text_input('Enter device path: ', fields['device'])
+                    fields['device'] = new_path
+                    path_type = _detect_path_type(new_path)
+                    phys_idx = _find_phys_idx(new_path)
+                    formats = V4L2Parser.get_formats_and_resolutions(new_path)
 
             elif key in (ord('a'), ord('A')):
-                # Auto-fill v4l2ctl from currently loaded controls
                 if self.controls and self.current_device:
                     parts = []
                     for ctrl in self.controls:
