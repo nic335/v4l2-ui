@@ -507,10 +507,10 @@ class V4L2UI:
         # 1-8 repeats: x1, 9-20 repeats: x10, 21+ repeats: x100
         if self.key_repeat_count <= 8:
             multiplier = 1
-        elif self.key_repeat_count <= 20:
+        elif self.key_repeat_count <= 40:
             multiplier = 10
         else:
-            multiplier = 100
+            multiplier = 50
         
         if ctrl.ctrl_type == 'int':
             # Calculate step with multiplier
