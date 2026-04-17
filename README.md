@@ -2,10 +2,26 @@
 
 Interactive terminal-based UI for managing v4l2-ctl camera settings via SSH/PuTTY.
 
-## Quick Start (Standalone - No Installation!)
+## One-Line Installation
+
+Copy and paste this command to install and run:
 
 ```bash
-cd v4l2-ui
+cd ~ && git clone https://github.com/nic335/v4l2-ui.git && cd v4l2-ui && chmod +x v4l2-ui install.sh && ./install.sh
+```
+
+Or for standalone mode (no installation):
+
+```bash
+cd ~ && git clone https://github.com/nic335/v4l2-ui.git && cd v4l2-ui && chmod +x v4l2-ui && ./v4l2-ui
+```
+
+## Quick Start (Already Cloned)
+
+If you already have the repository:
+
+```bash
+cd ~/v4l2-ui
 ./v4l2-ui
 ```
 

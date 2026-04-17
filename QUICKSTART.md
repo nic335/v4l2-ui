@@ -1,12 +1,29 @@
 # V4L2 Control UI - Quick Start
 
+## One-Line Installation
+
+Copy and paste this single command:
+
+```bash
+cd ~ && git clone https://github.com/nic335/v4l2-ui.git && cd v4l2-ui && chmod +x v4l2-ui && ./v4l2-ui
+```
+
+That's it! It will clone, set permissions, and launch the tool.
+
 ## Standalone Usage (No Installation Required!)
 
 You can run this tool directly from its directory without installing anything.
 
 ### 1. Get the Files
 
-Extract the archive or copy the v4l2-ui folder:
+**From GitHub:**
+```bash
+cd ~
+git clone https://github.com/nic335/v4l2-ui.git
+cd v4l2-ui
+```
+
+**From archive:**
 ```bash
 tar -xzf v4l2-ui.tar.gz
 cd v4l2-ui

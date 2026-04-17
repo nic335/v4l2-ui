@@ -1,5 +1,24 @@
 # V4L2 Control UI - Installation & Sharing Guide
 
+## One-Line Installation (Easiest!)
+
+Copy and paste this single command:
+
+```bash
+cd ~ && git clone https://github.com/nic335/v4l2-ui.git && cd v4l2-ui && chmod +x v4l2-ui install.sh && ./install.sh
+```
+
+This will:
+1. Clone the repository to `~/v4l2-ui`
+2. Set executable permissions
+3. Run the installer
+4. Set up system-wide access
+
+**For standalone mode (no system install):**
+```bash
+cd ~ && git clone https://github.com/nic335/v4l2-ui.git && cd v4l2-ui && chmod +x v4l2-ui && ./v4l2-ui
+```
+
 ## Quick Installation Checklist
 
 For your friends to install and use this tool, they need to:
