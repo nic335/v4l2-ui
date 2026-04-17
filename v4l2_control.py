@@ -86,21 +86,44 @@ class V4L2Control:
 class V4L2Parser:
     """Parser for v4l2-ctl command outputs"""
     
-    _VIDIOC_QUERYCAP      = 0x80685600
+    _VIDIOC_QUERYCAP        = 0x80685600
+    _VIDIOC_ENUM_FMT        = 0xC0405602
     _V4L2_CAP_VIDEO_CAPTURE = 0x00000001
     _V4L2_CAP_DEVICE_CAPS   = 0x80000000
+    _V4L2_BUF_TYPE_VIDEO_CAPTURE = 1
 
     @staticmethod
     def _has_video_capture(device_path: str) -> bool:
-        """Return True only if the node supports VIDEO_CAPTURE via VIDIOC_QUERYCAP."""
+        """Return True if the node is a usable VIDEO_CAPTURE device.
+
+        Strategy:
+        1. PermissionError → include (can't probe, assume it's a real camera;
+           user will see an error when they try to use it).
+        2. VIDIOC_QUERYCAP must report V4L2_CAP_VIDEO_CAPTURE in effective caps.
+        3. VIDIOC_ENUM_FMT must succeed for at least one format (filters ISP/codec
+           nodes that claim VIDEO_CAPTURE but expose zero pixel formats).
+        """
         try:
             with open(device_path, 'rb') as f:
+                # --- capability check ---
                 buf = b'\x00' * 104
                 r = fcntl.ioctl(f, V4L2Parser._VIDIOC_QUERYCAP, buf)
                 caps = struct.unpack_from('I', r, 84)[0]
                 dc   = struct.unpack_from('I', r, 88)[0]
                 effective = dc if (caps & V4L2Parser._V4L2_CAP_DEVICE_CAPS) else caps
-                return bool(effective & V4L2Parser._V4L2_CAP_VIDEO_CAPTURE)
+                if not (effective & V4L2Parser._V4L2_CAP_VIDEO_CAPTURE):
+                    return False
+                # --- format check: must have ≥1 pixel format ---
+                fmt_buf = bytearray(64)
+                struct.pack_into('II', fmt_buf, 0,
+                                 0, V4L2Parser._V4L2_BUF_TYPE_VIDEO_CAPTURE)
+                try:
+                    fcntl.ioctl(f, V4L2Parser._VIDIOC_ENUM_FMT, fmt_buf)
+                    return True
+                except OSError:
+                    return False
+        except PermissionError:
+            return True   # can't probe → assume it's a real camera
         except (IOError, OSError):
             return False
 
@@ -804,7 +827,7 @@ class V4L2UI:
             return
         
         # Determine multiplier based on repeat count
-        # 1-8 repeats: x1, 9-20 repeats: x10, 21+ repeats: x100
+        # 1-8 repeats: x1, 9-20 repeats: x10, 21+ repeats: x50
         if self.key_repeat_count <= 8:
             multiplier = 1
         elif self.key_repeat_count <= 40:
