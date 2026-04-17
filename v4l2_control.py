@@ -317,10 +317,15 @@ class V4L2UI:
         self.stdscr.nodelay(True)
         self.stdscr.timeout(50)  # 50ms timeout for getch
         
+        # Draw initial screen
+        self.draw_control_screen()
+        
         while True:
-            self.draw_control_screen()
-            
             key = self.stdscr.getch()
+            
+            # Skip redraw if no key pressed (timeout) - prevents flickering
+            if key == -1:
+                continue
             
             # Track key repeats for progressive increment
             current_time = time.time()
@@ -334,14 +339,14 @@ class V4L2UI:
             else:
                 self.key_repeat_count = 0  # Different key pressed
             
-            if key != -1:  # -1 means no key pressed (timeout)
-                self.last_key = key
-                self.last_key_time = current_time
+            self.last_key = key
+            self.last_key_time = current_time
             
             if key == ord('q') or key == ord('Q'):
                 break
             elif key == ord('d') or key == ord('D'):
                 if self.select_device():
+                    self.draw_control_screen()
                     continue
                 else:
                     break
@@ -365,6 +370,9 @@ class V4L2UI:
                 self.save_preset()
             elif key == ord('l') or key == ord('L'):
                 self.load_preset()
+            
+            # Only redraw after processing a key
+            self.draw_control_screen()
     
     def generate_crowsnest_config(self) -> str:
         """Generate crowsnest v4l2ctl configuration line (only non-default values)"""
