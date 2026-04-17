@@ -7,6 +7,32 @@ Interactive terminal-based UI for managing v4l2-ctl camera settings via SSH/PuTT
 
 > 🤖 **Vibe coded with AI:** This project was collaboratively developed with Claude (Anthropic AI). Human creativity meets AI assistance!
 
+## Preview
+
+```
+Device: /dev/video0 - UVC Camera (046d:0825)                    [d] Change Device | [r] Refresh | [q] Quit
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+User Controls
+  brightness                            128  [0-255, step 1]       ◄───────●────────►
+  contrast                               32  [0-255, step 1]       ◄─●──────────────►
+  saturation                             32  [0-255, step 1]       ◄─●──────────────►
+  white_balance_automatic               OFF  [toggle]              [ ] ON  [●] OFF
+  gain                                   64  [0-255, step 1]       ◄───●────────────►
+  power_line_frequency                60 Hz  [menu]                [Disabled | 50 Hz | 60 Hz]
+> white_balance_temperature            4000  [0-10000, step 10]    ◄──────●─────────►
+  sharpness                              24  [0-255, step 1]       ◄─●──────────────►
+  backlight_compensation                  0  [0-1, step 1]         ◄●───────────────►
+Camera Controls
+  auto_exposure                  Aperture P  [menu]                [Manual Mode | Aperture Priority Mode]
+  exposure_time_absolute                336  [1-10000, step 1]     ◄●───────────────► (inactive)
+  exposure_dynamic_framerate            OFF  [toggle]              [ ] ON  [●] OFF
+
+↑↓: Navigate | ←→: Adjust | Enter: Edit | Space: Toggle | 0: Default | s: Save | l: Load
+v4l2ctl: white_balance_automatic=0
+Set white_balance_temperature = 4000
+```
+
 ## One-Line Installation
 
 Copy and paste this command to install and run:
