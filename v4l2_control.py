@@ -209,6 +209,79 @@ class V4L2Parser:
         except subprocess.CalledProcessError:
             return False
 
+    @staticmethod
+    def get_formats_and_resolutions(device_path: str) -> List[Dict]:
+        """Parse v4l2-ctl --list-formats-ext into a list of format dicts"""
+        try:
+            result = subprocess.run(['v4l2-ctl', '-d', device_path, '--list-formats-ext'],
+                                    capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError:
+            return []
+
+        formats = []
+        current_fmt = None
+        current_res = None
+
+        for line in result.stdout.split('\n'):
+            fmt_match = re.search(r"\[\d+\]: '([^']+)' \(([^)]+)\)", line)
+            if fmt_match:
+                current_fmt = {'pixel_format': fmt_match.group(1),
+                               'description': fmt_match.group(2),
+                               'resolutions': []}
+                formats.append(current_fmt)
+                current_res = None
+                continue
+
+            if current_fmt is None:
+                continue
+
+            size_match = re.search(r'Size:\s+\S+\s+(\d+x\d+)', line)
+            if size_match:
+                current_res = {'size': size_match.group(1), 'fps': []}
+                current_fmt['resolutions'].append(current_res)
+                continue
+
+            if current_res is not None:
+                fps_match = re.search(r'Interval:.*\(([\d.]+) fps\)', line)
+                if fps_match:
+                    current_res['fps'].append(fps_match.group(1))
+
+        return formats
+
+    @staticmethod
+    def get_device_info(device_path: str) -> Dict[str, Any]:
+        """Parse v4l2-ctl --info into a capabilities dict"""
+        try:
+            result = subprocess.run(['v4l2-ctl', '-d', device_path, '--info'],
+                                    capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError:
+            return {}
+
+        info = {'driver': '', 'card': '', 'bus': '', 'version': '',
+                'capabilities': [], 'device_caps': []}
+        section = None
+
+        for line in result.stdout.split('\n'):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if 'Driver name' in line:
+                info['driver'] = stripped.split(':', 1)[-1].strip()
+            elif 'Card type' in line:
+                info['card'] = stripped.split(':', 1)[-1].strip()
+            elif 'Bus info' in line:
+                info['bus'] = stripped.split(':', 1)[-1].strip()
+            elif 'Driver version' in line:
+                info['version'] = stripped.split(':', 1)[-1].strip()
+            elif re.match(r'Capabilities\s*:', line):
+                section = 'capabilities'
+            elif re.match(r'Device Caps\s*:', line):
+                section = 'device_caps'
+            elif section and stripped and not re.search(r'0x[0-9a-f]+', stripped):
+                info[section].append(stripped)
+
+        return info
+
 
 class V4L2UI:
     """Curses-based UI for V4L2 control"""
@@ -224,6 +297,8 @@ class V4L2UI:
         self.status_message = ""
         self.preset_dir = os.path.expanduser("~/.config/v4l2-ui/presets")
         os.makedirs(self.preset_dir, exist_ok=True)
+        self.device_info = {}
+        self.formats = []
         
         # Progressive increment tracking
         self.last_key = None
@@ -307,6 +382,8 @@ class V4L2UI:
                     ctrl.menu_options = options
                     ctrl.menu_indices = indices
         
+        self.device_info = V4L2Parser.get_device_info(self.current_device.path)
+        self.formats = V4L2Parser.get_formats_and_resolutions(self.current_device.path)
         self.selected_idx = 0
         self.scroll_offset = 0
         self.status_message = f"Loaded {len(self.controls)} controls"
@@ -370,6 +447,8 @@ class V4L2UI:
                 self.save_preset()
             elif key == ord('l') or key == ord('L'):
                 self.load_preset()
+            elif key == ord('i') or key == ord('I'):
+                self.show_info_screen()
             
             # Only redraw after processing a key
             self.draw_control_screen()
@@ -404,7 +483,7 @@ class V4L2UI:
         height, width = self.stdscr.getmaxyx()
         
         self.stdscr.addstr(0, 0, f"Device: {self.current_device}", curses.A_BOLD)
-        help_text = "[d] Change Device | [r] Refresh | [q] Quit"
+        help_text = "[d] Change Device | [r] Refresh | [i] Info | [q] Quit"
         self.stdscr.addstr(0, width - len(help_text) - 1, help_text, curses.color_pair(5))
         self.stdscr.addstr(1, 0, "=" * (width - 1))
         
@@ -416,7 +495,7 @@ class V4L2UI:
         if self.status_message:
             self.stdscr.addstr(height - 2, 0, self.status_message[:width-1], curses.color_pair(3))
         
-        nav_help = "↑↓: Navigate | ←→: Adjust | Enter: Edit | Space: Toggle | 0: Default | s: Save | l: Load"
+        nav_help = "↑↓: Navigate | ←→: Adjust | Enter: Edit | Space: Toggle | 0: Default | s: Save | l: Load | i: Info"
         self.stdscr.addstr(height - 3, 0, nav_help[:width-1], curses.color_pair(5))
         
         visible_height = height - 6
@@ -811,6 +890,97 @@ class V4L2UI:
         except (IOError, json.JSONDecodeError, KeyError) as e:
             self.status_message = f"Error loading preset: {e}"
     
+    def show_info_screen(self):
+        """Show device capabilities and available resolutions"""
+        # Build the lines to display
+        lines = []
+
+        # Device info section
+        if self.device_info:
+            lines.append(('header', 'Device Information'))
+            lines.append(('separator', ''))
+            for key, label in [('driver', 'Driver'), ('card', 'Card'),
+                                ('bus', 'Bus'), ('version', 'Version')]:
+                val = self.device_info.get(key, '')
+                if val:
+                    lines.append(('field', f"  {label:<12}: {val}"))
+            caps = self.device_info.get('capabilities', [])
+            if caps:
+                lines.append(('field', f"  {'Capabilities':<12}: {caps[0]}"))
+                for cap in caps[1:]:
+                    lines.append(('field', f"  {'':<14}  {cap}"))
+            dev_caps = self.device_info.get('device_caps', [])
+            if dev_caps:
+                lines.append(('field', f"  {'Device Caps':<12}: {dev_caps[0]}"))
+                for cap in dev_caps[1:]:
+                    lines.append(('field', f"  {'':<14}  {cap}"))
+        else:
+            lines.append(('field', '  No device info available'))
+
+        lines.append(('blank', ''))
+
+        # Formats / resolutions section
+        lines.append(('header', 'Supported Formats & Resolutions'))
+        lines.append(('separator', ''))
+        if self.formats:
+            for fmt in self.formats:
+                lines.append(('format', f"  [{fmt['pixel_format']}] {fmt['description']}"))
+                for res in fmt['resolutions']:
+                    fps_str = ', '.join(res['fps']) + ' fps' if res['fps'] else ''
+                    lines.append(('resolution', f"      {res['size']:<16} {fps_str}"))
+        else:
+            lines.append(('field', '  No format info available'))
+
+        # Scrollable display loop
+        scroll = 0
+        self.stdscr.nodelay(False)
+        self.stdscr.timeout(-1)
+
+        while True:
+            self.stdscr.clear()
+            height, width = self.stdscr.getmaxyx()
+            visible = height - 3
+
+            self.stdscr.addstr(0, 0, f"Camera Info: {self.current_device.name}", curses.A_BOLD)
+            self.stdscr.addstr(1, 0, '=' * (width - 1))
+
+            for row, (kind, text) in enumerate(lines[scroll:scroll + visible]):
+                y = 2 + row
+                if y >= height - 1:
+                    break
+                text = text[:width - 1]
+                if kind == 'header':
+                    self.stdscr.addstr(y, 0, text, curses.A_BOLD | curses.color_pair(2))
+                elif kind == 'separator':
+                    self.stdscr.addstr(y, 0, '─' * min(width - 1, 60), curses.color_pair(5))
+                elif kind == 'format':
+                    self.stdscr.addstr(y, 0, text, curses.color_pair(3))
+                elif kind == 'resolution':
+                    self.stdscr.addstr(y, 0, text, curses.color_pair(5))
+                else:
+                    self.stdscr.addstr(y, 0, text)
+
+            footer = "↑↓/PgUp/PgDn: Scroll | q/Esc: Back"
+            self.stdscr.addstr(height - 1, 0, footer[:width - 1], curses.color_pair(5))
+            self.stdscr.refresh()
+
+            key = self.stdscr.getch()
+            max_scroll = max(0, len(lines) - visible)
+
+            if key in (ord('q'), ord('Q'), 27):
+                break
+            elif key == curses.KEY_UP:
+                scroll = max(0, scroll - 1)
+            elif key == curses.KEY_DOWN:
+                scroll = min(max_scroll, scroll + 1)
+            elif key == curses.KEY_PPAGE:
+                scroll = max(0, scroll - visible)
+            elif key == curses.KEY_NPAGE:
+                scroll = min(max_scroll, scroll + visible)
+
+        self.stdscr.nodelay(True)
+        self.stdscr.timeout(50)
+
     def show_error(self, message: str):
         """Show an error message and wait for key press"""
         self.stdscr.clear()
