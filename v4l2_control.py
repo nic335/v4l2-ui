@@ -10,6 +10,8 @@ import sys
 import json
 import os
 import configparser
+import fcntl
+import struct
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 import time
@@ -84,26 +86,43 @@ class V4L2Control:
 class V4L2Parser:
     """Parser for v4l2-ctl command outputs"""
     
+    _VIDIOC_QUERYCAP      = 0x80685600
+    _V4L2_CAP_VIDEO_CAPTURE = 0x00000001
+    _V4L2_CAP_DEVICE_CAPS   = 0x80000000
+
+    @staticmethod
+    def _has_video_capture(device_path: str) -> bool:
+        """Return True only if the node supports VIDEO_CAPTURE via VIDIOC_QUERYCAP."""
+        try:
+            with open(device_path, 'rb') as f:
+                buf = b'\x00' * 104
+                r = fcntl.ioctl(f, V4L2Parser._VIDIOC_QUERYCAP, buf)
+                caps = struct.unpack_from('I', r, 84)[0]
+                dc   = struct.unpack_from('I', r, 88)[0]
+                effective = dc if (caps & V4L2Parser._V4L2_CAP_DEVICE_CAPS) else caps
+                return bool(effective & V4L2Parser._V4L2_CAP_VIDEO_CAPTURE)
+        except (IOError, OSError):
+            return False
+
     @staticmethod
     def list_devices() -> List[V4L2Device]:
-        """Parse v4l2-ctl --list-devices output"""
+        """Parse v4l2-ctl --list-devices, filtered to VIDEO_CAPTURE nodes only."""
         try:
-            result = subprocess.run(['v4l2-ctl', '--list-devices'], 
-                                  capture_output=True, text=True, check=True)
+            result = subprocess.run(['v4l2-ctl', '--list-devices'],
+                                    capture_output=True, text=True, check=True)
             devices = []
             current_name = None
-            
+
             for line in result.stdout.split('\n'):
                 line = line.strip()
                 if not line:
                     continue
-                
                 if line.startswith('/dev/video'):
-                    if current_name:
+                    if current_name and V4L2Parser._has_video_capture(line):
                         devices.append(V4L2Device(line, current_name))
                 elif not line.startswith('/dev/'):
                     current_name = line.rstrip(':')
-            
+
             return devices
         except subprocess.CalledProcessError:
             return []
@@ -1360,6 +1379,11 @@ class V4L2UI:
                              section: str, data: Dict):
         """Edit a single cam section with live resolution/fps and path-type pickers"""
         PATH_TYPES = ['by-id', 'by-path', 'by-video']
+        PATH_TYPE_LABELS = {
+            'by-id':    'by-id      (/dev/v4l/by-id/…)',
+            'by-path':  'by-hardware (/dev/v4l/by-path/…)',
+            'by-video': 'by-video   (/dev/videoN)',
+        }
         MODES = ['ustreamer', 'camera-streamer']
 
         # Build physical device map (one entry per real /dev/videoN)
@@ -1445,8 +1469,10 @@ class V4L2UI:
                         for pt in PATH_TYPES:
                             if e.get(pt):
                                 avail.append(pt)
-                    val = path_type
-                    hint = f'  ({"/".join(avail)})  ◄/► cycle' if sel else ''
+                    val = PATH_TYPE_LABELS.get(path_type, path_type)
+                    avail_labels = ' / '.join(
+                        pt.replace('by-path', 'by-hardware') for pt in avail)
+                    hint = f'  [{avail_labels}]  ◄/► cycle' if sel else ''
                 else:
                     val = fields[fname]
                     hint = ''
