@@ -9,6 +9,7 @@ import curses
 import sys
 import json
 import os
+import configparser
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 import time
@@ -283,6 +284,161 @@ class V4L2Parser:
         return info
 
 
+class CrowsnestConfig:
+    """Parser and writer for crowsnest.conf"""
+
+    SEARCH_PATHS = [
+        '~/printer_data/config/crowsnest.conf',
+        '~/klipper_config/crowsnest.conf',
+        '~/crowsnest/crowsnest.conf',
+        '/etc/crowsnest.conf',
+    ]
+
+    def __init__(self, path: str = None):
+        self.path = path or self._find_config()
+        self.raw_lines: List[str] = []
+        self.sections: Dict[str, Dict[str, str]] = {}
+        if self.path:
+            self._load()
+
+    def _find_config(self) -> Optional[str]:
+        for p in self.SEARCH_PATHS:
+            expanded = os.path.expanduser(p)
+            if os.path.isfile(expanded):
+                return expanded
+        return None
+
+    def _load(self):
+        try:
+            with open(self.path, 'r') as f:
+                self.raw_lines = f.readlines()
+        except IOError:
+            return
+        cfg = configparser.RawConfigParser(
+            comment_prefixes=('#', ';'),
+            inline_comment_prefixes=('#',),
+            delimiters=(':',),
+            strict=False
+        )
+        cfg.read(self.path)
+        self.sections = {s: dict(cfg[s]) for s in cfg.sections()}
+
+    def get_cam_sections(self) -> List[Tuple[str, Dict[str, str]]]:
+        return [(s, d) for s, d in self.sections.items()
+                if s.lower().startswith('cam')]
+
+    def update_cam(self, section: str, key: str, value: str):
+        """Update key in section, preserving file structure and comments."""
+        in_section = False
+        key_found = False
+        commented_idx = -1
+        next_section_idx = len(self.raw_lines)
+
+        for i, line in enumerate(self.raw_lines):
+            stripped = line.strip()
+            sec_match = re.match(r'^\[(.+)\]', stripped)
+            if sec_match:
+                if in_section:
+                    next_section_idx = i
+                    break
+                in_section = sec_match.group(1).strip().lower() == section.lower()
+                continue
+            if not in_section:
+                continue
+
+            active = re.match(r'^(' + re.escape(key) + r')\s*:', stripped, re.IGNORECASE)
+            if active:
+                trail = re.search(r'\s{2,}(#.*)$', line)
+                comment = '  ' + trail.group(1) if trail else ''
+                self.raw_lines[i] = f"{key}: {value}{comment}\n"
+                key_found = True
+                break
+
+            if commented_idx < 0:
+                commented = re.match(
+                    r'^#+\s*(' + re.escape(key) + r')\s*:', stripped, re.IGNORECASE)
+                if commented:
+                    commented_idx = i
+
+        if not key_found:
+            if commented_idx >= 0:
+                self.raw_lines[commented_idx] = f"{key}: {value}\n"
+            else:
+                self.raw_lines.insert(next_section_idx, f"{key}: {value}\n")
+
+        if section not in self.sections:
+            self.sections[section] = {}
+        self.sections[section][key] = value
+
+    def next_cam_name(self) -> str:
+        """Return the next available [cam N] name"""
+        existing = [s for s in self.sections if s.lower().startswith('cam')]
+        nums = []
+        for s in existing:
+            m = re.search(r'(\d+)', s)
+            if m:
+                nums.append(int(m.group(1)))
+        n = 1
+        while n in nums:
+            n += 1
+        return f'cam {n}'
+
+    def add_cam_section(self, section: str, defaults: Dict[str, str] = None) -> bool:
+        """Append a new cam section to the file"""
+        if section in self.sections:
+            return False
+        defaults = defaults or {
+            'mode': 'ustreamer',
+            'port': '8080',
+            'device': '/dev/video0',
+            'resolution': '1280x720',
+            'max_fps': '30',
+            'v4l2ctl': '',
+        }
+        lines = [f'\n[{section}]\n']
+        for k, v in defaults.items():
+            if v:
+                lines.append(f'{k}: {v}\n')
+        self.raw_lines.extend(lines)
+        self.sections[section] = dict(defaults)
+        return True
+
+    def delete_cam_section(self, section: str) -> bool:
+        """Remove a cam section and all its lines from the file"""
+        if section not in self.sections:
+            return False
+        in_section = False
+        start_idx = -1
+        end_idx = len(self.raw_lines)
+        for i, line in enumerate(self.raw_lines):
+            m = re.match(r'^\[(.+)\]', line.strip())
+            if m:
+                if m.group(1).strip().lower() == section.lower():
+                    in_section = True
+                    start_idx = i
+                elif in_section:
+                    end_idx = i
+                    break
+        if start_idx < 0:
+            return False
+        # Also eat a blank line immediately before the section header
+        while start_idx > 0 and self.raw_lines[start_idx - 1].strip() == '':
+            start_idx -= 1
+        del self.raw_lines[start_idx:end_idx]
+        del self.sections[section]
+        return True
+
+    def save(self) -> bool:
+        if not self.path:
+            return False
+        try:
+            with open(self.path, 'w') as f:
+                f.writelines(self.raw_lines)
+            return True
+        except IOError:
+            return False
+
+
 class V4L2UI:
     """Curses-based UI for V4L2 control"""
     
@@ -449,6 +605,8 @@ class V4L2UI:
                 self.load_preset()
             elif key == ord('i') or key == ord('I'):
                 self.show_info_screen()
+            elif key == ord('c') or key == ord('C'):
+                self.show_crowsnest_editor()
             
             # Only redraw after processing a key
             self.draw_control_screen()
@@ -483,7 +641,7 @@ class V4L2UI:
         height, width = self.stdscr.getmaxyx()
         
         self.stdscr.addstr(0, 0, f"Device: {self.current_device}", curses.A_BOLD)
-        help_text = "[d] Change Device | [r] Refresh | [i] Info | [q] Quit"
+        help_text = "[d] Device | [r] Refresh | [i] Info | [c] Crowsnest | [q] Quit"
         self.stdscr.addstr(0, width - len(help_text) - 1, help_text, curses.color_pair(5))
         self.stdscr.addstr(1, 0, "=" * (width - 1))
         
@@ -495,7 +653,7 @@ class V4L2UI:
         if self.status_message:
             self.stdscr.addstr(height - 2, 0, self.status_message[:width-1], curses.color_pair(3))
         
-        nav_help = "↑↓: Navigate | ←→: Adjust | Enter: Edit | Space: Toggle | 0: Default | s: Save | l: Load | i: Info"
+        nav_help = "↑↓: Navigate | ←→: Adjust | Enter: Edit | Space: Toggle | 0: Default | s: Save | l: Load | i: Info | c: Crowsnest"
         self.stdscr.addstr(height - 3, 0, nav_help[:width-1], curses.color_pair(5))
         
         visible_height = height - 6
@@ -977,6 +1135,350 @@ class V4L2UI:
                 scroll = max(0, scroll - visible)
             elif key == curses.KEY_NPAGE:
                 scroll = min(max_scroll, scroll + visible)
+
+        self.stdscr.nodelay(True)
+        self.stdscr.timeout(50)
+
+    def _text_input(self, prompt: str, default: str = '') -> str:
+        """Inline text input, returns new value or default on cancel"""
+        height, width = self.stdscr.getmaxyx()
+        self.stdscr.nodelay(False)
+        self.stdscr.timeout(-1)
+        curses.echo()
+        curses.curs_set(1)
+        self.stdscr.addstr(height - 1, 0, ' ' * (width - 1))
+        self.stdscr.addstr(height - 1, 0, prompt[:width - 1])
+        self.stdscr.refresh()
+        try:
+            raw = self.stdscr.getstr(height - 1, len(prompt), width - len(prompt) - 2)
+            result = raw.decode('utf-8').strip()
+        except (UnicodeDecodeError, Exception):
+            result = ''
+        curses.noecho()
+        curses.curs_set(0)
+        self.stdscr.nodelay(True)
+        self.stdscr.timeout(50)
+        return result if result else default
+
+    def _show_popup(self, message: str):
+        """Show a one-line message and wait for a keypress"""
+        height, width = self.stdscr.getmaxyx()
+        self.stdscr.nodelay(False)
+        self.stdscr.timeout(-1)
+        self.stdscr.addstr(height - 1, 0, ' ' * (width - 1))
+        self.stdscr.addstr(height - 1, 0, (message + '  [any key]')[:width - 1],
+                           curses.color_pair(4))
+        self.stdscr.refresh()
+        self.stdscr.getch()
+        self.stdscr.nodelay(True)
+        self.stdscr.timeout(50)
+
+    def show_crowsnest_editor(self):
+        """Crowsnest.conf camera section editor"""
+        cfg = CrowsnestConfig()
+        if not cfg.path:
+            self._show_popup('crowsnest.conf not found')
+            return
+
+        while True:
+            cfg._load()
+            cam_sections = cfg.get_cam_sections()
+            if not cam_sections:
+                self._show_popup(f'No [cam N] sections found in {cfg.path}')
+                return
+
+            selected = 0
+            result = self._crowsnest_section_picker(cfg, cam_sections, selected)
+            if result is None:
+                return
+            selected, cam_sections = result
+            section_name, section_data = cam_sections[selected]
+            self._edit_crowsnest_cam(cfg, section_name, dict(section_data))
+
+    def _confirm(self, message: str) -> bool:
+        """Show a y/n confirmation on the bottom line, return True if confirmed"""
+        height, width = self.stdscr.getmaxyx()
+        prompt = f'{message}  [y/N]: '
+        self.stdscr.addstr(height - 1, 0, ' ' * (width - 1))
+        self.stdscr.addstr(height - 1, 0, prompt[:width - 1], curses.color_pair(4))
+        self.stdscr.refresh()
+        key = self.stdscr.getch()
+        return key in (ord('y'), ord('Y'))
+
+    def _crowsnest_section_picker(self, cfg: 'CrowsnestConfig',
+                                   cam_sections, initial_sel: int):
+        """Pick a cam section; returns (selected_idx, cam_sections) or None to exit"""
+        selected = initial_sel
+        self.stdscr.nodelay(False)
+        self.stdscr.timeout(-1)
+
+        while True:
+            self.stdscr.clear()
+            height, width = self.stdscr.getmaxyx()
+            self.stdscr.addstr(0, 0,
+                f'Crowsnest Config: {cfg.path}', curses.A_BOLD)
+            self.stdscr.addstr(1, 0, '=' * (width - 1))
+            self.stdscr.addstr(3, 0, 'Select camera section to edit:',
+                               curses.color_pair(2))
+
+            for idx, (sec, data) in enumerate(cam_sections):
+                y = 5 + idx
+                if y >= height - 2:
+                    break
+                device = data.get('device', '?')
+                res    = data.get('resolution', '?')
+                fps    = data.get('max_fps', '?')
+                v4l2   = data.get('v4l2ctl', '')
+                summary = f"{device}  {res}@{fps}fps"
+                if v4l2:
+                    summary += f"  [{v4l2[:20]}{'...' if len(v4l2)>20 else ''}]"
+                prefix = '> ' if idx == selected else '  '
+                line = f"{prefix}{sec}: {summary}"
+                attr = curses.color_pair(1) if idx == selected else 0
+                self.stdscr.addstr(y, 0, line[:width - 1], attr)
+
+            self.stdscr.addstr(height - 1, 0,
+                '↑↓: Navigate | Enter: Edit | n: New cam | x: Delete | q: Back',
+                curses.color_pair(5))
+            self.stdscr.refresh()
+
+            key = self.stdscr.getch()
+            if key in (ord('q'), ord('Q'), 27):
+                self.stdscr.nodelay(True)
+                self.stdscr.timeout(50)
+                return None
+
+            elif key == curses.KEY_UP:
+                selected = max(0, selected - 1)
+            elif key == curses.KEY_DOWN:
+                selected = min(len(cam_sections) - 1, selected + 1)
+
+            elif key in (ord('\n'), curses.KEY_ENTER, 10):
+                self.stdscr.nodelay(True)
+                self.stdscr.timeout(50)
+                return selected, cam_sections
+
+            elif key in (ord('n'), ord('N')):
+                # Determine next port from existing sections
+                existing_ports = []
+                for _, d in cam_sections:
+                    try:
+                        existing_ports.append(int(d.get('port', 0)))
+                    except ValueError:
+                        pass
+                next_port = str(max(existing_ports) + 1) if existing_ports else '8080'
+
+                new_name = cfg.next_cam_name()
+                # Pre-fill device from first available v4l2 device
+                all_devices = V4L2Parser.list_devices()
+                default_device = all_devices[0].path if all_devices else '/dev/video0'
+                formats = V4L2Parser.get_formats_and_resolutions(default_device)
+                default_res = '1280x720'
+                default_fps = '30'
+                if formats and formats[0]['resolutions']:
+                    r = formats[0]['resolutions'][0]
+                    default_res = r['size']
+                    default_fps = r['fps'][0] if r['fps'] else '30'
+
+                cfg.add_cam_section(new_name, {
+                    'mode':       'ustreamer',
+                    'port':       next_port,
+                    'device':     default_device,
+                    'resolution': default_res,
+                    'max_fps':    default_fps,
+                    'v4l2ctl':    '',
+                })
+                if cfg.save():
+                    cfg._load()
+                    cam_sections = cfg.get_cam_sections()
+                    # Jump selection to the new entry
+                    selected = len(cam_sections) - 1
+                    # Open editor immediately
+                    self.stdscr.nodelay(True)
+                    self.stdscr.timeout(50)
+                    return selected, cam_sections
+
+            elif key in (ord('x'), ord('X'), curses.KEY_DC):
+                if cam_sections:
+                    sec_name = cam_sections[selected][0]
+                    if self._confirm(f"Delete [{sec_name}]?"):
+                        cfg.delete_cam_section(sec_name)
+                        if cfg.save():
+                            cfg._load()
+                            cam_sections = cfg.get_cam_sections()
+                            selected = max(0, min(selected, len(cam_sections) - 1))
+                            if not cam_sections:
+                                self.stdscr.nodelay(True)
+                                self.stdscr.timeout(50)
+                                return None
+
+    def _edit_crowsnest_cam(self, cfg: 'CrowsnestConfig',
+                             section: str, data: Dict):
+        """Edit a single cam section with live resolution/fps pickers"""
+        MODES = ['ustreamer', 'camera-streamer']
+        all_devices = V4L2Parser.list_devices()
+        device_paths = [d.path for d in all_devices]
+
+        fields = {
+            'device':     data.get('device', device_paths[0] if device_paths else '/dev/video0'),
+            'mode':       data.get('mode', 'ustreamer'),
+            'port':       data.get('port', '8080'),
+            'resolution': data.get('resolution', ''),
+            'max_fps':    data.get('max_fps', '30'),
+            'v4l2ctl':    data.get('v4l2ctl', ''),
+        }
+        field_order = ['device', 'mode', 'port', 'resolution', 'max_fps', 'v4l2ctl']
+        selected_field = 0
+        status = f'Editing [{section}]  —  w: Save  |  q: Cancel'
+
+        # Load formats for the configured device
+        formats = V4L2Parser.get_formats_and_resolutions(fields['device'])
+
+        self.stdscr.nodelay(False)
+        self.stdscr.timeout(-1)
+
+        while True:
+            self.stdscr.clear()
+            height, width = self.stdscr.getmaxyx()
+            self.stdscr.addstr(0, 0,
+                f'Edit [{section}]  ←  {cfg.path}', curses.A_BOLD)
+            self.stdscr.addstr(1, 0, '=' * (width - 1))
+
+            for row, fname in enumerate(field_order):
+                y = 3 + row
+                if y >= height - 3:
+                    break
+                sel = (row == selected_field)
+                val = fields[fname]
+
+                # Build picker hint
+                hint = ''
+                if sel:
+                    if fname in ('device', 'mode', 'resolution', 'max_fps'):
+                        hint = '  ◄/► cycle'
+                    if fname == 'v4l2ctl':
+                        hint = '  Enter: edit  |  a: auto-fill from controls'
+                    elif fname in ('port',):
+                        hint = '  Enter: edit'
+
+                label = f"  {fname:<12}"
+                line = f"{label}: {val}{hint}"
+                if sel:
+                    self.stdscr.addstr(y, 0, line[:width - 1], curses.color_pair(1))
+                else:
+                    self.stdscr.addstr(y, 0, line[:width - 1])
+
+            self.stdscr.addstr(height - 2, 0, status[:width - 1],
+                               curses.color_pair(3))
+            self.stdscr.addstr(height - 1, 0,
+                '↑↓: Field | ←►: Cycle | Enter: Edit | a: Auto v4l2ctl | w: Save | q: Cancel',
+                curses.color_pair(5))
+            self.stdscr.refresh()
+
+            key = self.stdscr.getch()
+            fname = field_order[selected_field]
+
+            if key in (ord('q'), ord('Q'), 27):
+                break
+
+            elif key in (ord('w'), ord('W')):
+                for k, v in fields.items():
+                    cfg.update_cam(section, k, v)
+                if cfg.save():
+                    status = f'Saved [{section}] to {cfg.path}'
+                else:
+                    status = 'ERROR: could not write file'
+
+            elif key == curses.KEY_UP:
+                selected_field = max(0, selected_field - 1)
+            elif key == curses.KEY_DOWN:
+                selected_field = min(len(field_order) - 1, selected_field + 1)
+
+            elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+                d = 1 if key == curses.KEY_RIGHT else -1
+
+                if fname == 'mode':
+                    idx = MODES.index(fields['mode']) if fields['mode'] in MODES else 0
+                    fields['mode'] = MODES[(idx + d) % len(MODES)]
+
+                elif fname == 'device':
+                    if device_paths:
+                        try:
+                            idx = device_paths.index(fields['device'])
+                        except ValueError:
+                            idx = 0
+                        idx = (idx + d) % len(device_paths)
+                        fields['device'] = device_paths[idx]
+                        formats = V4L2Parser.get_formats_and_resolutions(
+                            fields['device'])
+                        # Reset res/fps to first available
+                        if formats and formats[0]['resolutions']:
+                            r = formats[0]['resolutions'][0]
+                            fields['resolution'] = r['size']
+                            fields['max_fps'] = r['fps'][0] if r['fps'] else '30'
+
+                elif fname == 'resolution':
+                    res_list = []
+                    for fmt in formats:
+                        for r in fmt['resolutions']:
+                            if r['size'] not in res_list:
+                                res_list.append(r['size'])
+                    if res_list:
+                        try:
+                            idx = res_list.index(fields['resolution'])
+                        except ValueError:
+                            idx = 0
+                        idx = (idx + d) % len(res_list)
+                        fields['resolution'] = res_list[idx]
+                        # Update fps for new resolution
+                        for fmt in formats:
+                            for r in fmt['resolutions']:
+                                if r['size'] == fields['resolution'] and r['fps']:
+                                    fields['max_fps'] = r['fps'][0]
+                                    break
+
+                elif fname == 'max_fps':
+                    fps_set: List[str] = []
+                    for fmt in formats:
+                        for r in fmt['resolutions']:
+                            if r['size'] == fields['resolution']:
+                                for f in r['fps']:
+                                    if f not in fps_set:
+                                        fps_set.append(f)
+                    if fps_set:
+                        try:
+                            idx = fps_set.index(fields['max_fps'])
+                        except ValueError:
+                            idx = 0
+                        fields['max_fps'] = fps_set[(idx + d) % len(fps_set)]
+
+            elif key in (ord('\n'), curses.KEY_ENTER, 10):
+                if fname in ('port', 'v4l2ctl', 'device', 'resolution', 'max_fps'):
+                    fields[fname] = self._text_input(
+                        f'Enter {fname}: ', fields[fname])
+                    if fname == 'device':
+                        formats = V4L2Parser.get_formats_and_resolutions(
+                            fields['device'])
+
+            elif key in (ord('a'), ord('A')):
+                # Auto-fill v4l2ctl from currently loaded controls
+                if self.controls and self.current_device:
+                    parts = []
+                    for ctrl in self.controls:
+                        if ctrl.inactive:
+                            continue
+                        if ctrl.ctrl_type == 'int' and ctrl.value != ctrl.default:
+                            parts.append(f'{ctrl.name}={ctrl.value}')
+                        elif ctrl.ctrl_type == 'bool' and ctrl.value != ctrl.default:
+                            parts.append(f'{ctrl.name}={ctrl.value}')
+                        elif ctrl.ctrl_type == 'menu' and ctrl.current_menu_idx != ctrl.default:
+                            parts.append(f'{ctrl.name}={ctrl.current_menu_idx}')
+                    fields['v4l2ctl'] = ','.join(parts)
+                    status = (f'Auto-filled v4l2ctl from '
+                              f'{self.current_device.path} '
+                              f'({len(parts)} non-default values)')
+                else:
+                    status = 'No controls loaded for current device'
 
         self.stdscr.nodelay(True)
         self.stdscr.timeout(50)
