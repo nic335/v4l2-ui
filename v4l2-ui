@@ -1,0 +1,18 @@
+#!/bin/bash
+# V4L2 Control UI Launcher Script
+# Works both standalone (from v4l2-ui directory) and installed (from ~/.local/bin)
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check if v4l2_control.py is in the same directory as this script
+if [ -f "$SCRIPT_DIR/v4l2_control.py" ]; then
+    # Running from v4l2-ui directory (standalone mode)
+    python3 "$SCRIPT_DIR/v4l2_control.py" "$@"
+elif [ -f "$HOME/v4l2-ui/v4l2_control.py" ]; then
+    # Running from installed location
+    python3 "$HOME/v4l2-ui/v4l2_control.py" "$@"
+else
+    echo "Error: Cannot find v4l2_control.py"
+    echo "Please run from the v4l2-ui directory or install using ./install.sh"
+    exit 1
+fi
