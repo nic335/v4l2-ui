@@ -1,6 +1,11 @@
 # V4L2 Control UI
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 Interactive terminal-based UI for managing v4l2-ctl camera settings via SSH/PuTTY.
+
+> 🤖 **Vibe coded with AI:** This project was collaboratively developed with Claude (Anthropic AI). Human creativity meets AI assistance!
 
 ## One-Line Installation
 
@@ -186,24 +191,54 @@ Presets are stored as JSON files and include:
 ## Troubleshooting
 
 ### No devices found
-- Ensure v4l2-ctl is installed: `sudo apt-get install v4l-utils`
-- Check if camera is connected: `v4l2-ctl --list-devices`
+- Check camera connection: `ls /dev/video*`
+- Verify v4l2-ctl is installed: `which v4l2-ctl`
 
 ### Permission denied
 - Add user to video group: `sudo usermod -a -G video $USER`
 - Log out and back in for changes to take effect
 
-### Controls not updating
-- Press `r` to refresh control values
-- Some controls may be inactive depending on other settings
+### Controls inactive
+- Some controls depend on others (e.g., `white_balance_temperature` requires `white_balance_automatic` to be OFF)
+- Toggle the parent control to activate dependent controls
 
-## Notes
+### Screen flickering
+- Update to latest version: `cd ~/v4l2-ui && git pull`
+- Try a different terminal emulator
+- Ensure terminal supports UTF-8 encoding
 
-- Inactive controls are marked with "(inactive)" and cannot be adjusted
-- Some controls affect others (e.g., auto_exposure affects exposure_time_absolute)
-- All changes are applied in real-time without confirmation
-- Works perfectly over SSH/PuTTY connections
+## Contributing
+
+We welcome contributions! Whether it's:
+- 🐛 Bug fixes
+- ✨ New features
+- 📝 Documentation improvements
+- 🎨 UI enhancements
+- 🔧 Performance optimizations
+
+**Pull requests are welcome!** See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Quick Contribution Guide
+
+1. Fork the repository
+2. Create your feature branch: `git checkout -b feature/amazing-feature`
+3. Commit your changes: `git commit -m 'Add amazing feature'`
+4. Push to the branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
 
 ## License
 
-Free to use and modify.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+You are free to:
+- ✅ Use commercially
+- ✅ Modify
+- ✅ Distribute
+- ✅ Private use
+
+## Acknowledgments
+
+- Built with Python and curses
+- Developed collaboratively with Claude AI (Anthropic)
+- Inspired by the need for easy camera control over SSH
+- Thanks to all contributors!
