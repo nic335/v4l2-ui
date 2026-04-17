@@ -575,6 +575,10 @@ class V4L2UI:
         
         height, width = self.stdscr.getmaxyx()
         
+        # Restore blocking mode for text input
+        self.stdscr.nodelay(False)
+        self.stdscr.timeout(-1)
+        
         curses.echo()
         curses.curs_set(1)
         
@@ -598,6 +602,10 @@ class V4L2UI:
         
         curses.noecho()
         curses.curs_set(0)
+        
+        # Restore nodelay mode for progressive increment
+        self.stdscr.nodelay(True)
+        self.stdscr.timeout(50)
     
     def refresh_control_states(self):
         """Refresh the inactive state of all controls by re-parsing from v4l2-ctl"""
@@ -651,6 +659,10 @@ class V4L2UI:
         """Save current control values to a preset file"""
         height, width = self.stdscr.getmaxyx()
         
+        # Restore blocking mode for text input
+        self.stdscr.nodelay(False)
+        self.stdscr.timeout(-1)
+        
         curses.echo()
         curses.curs_set(1)
         
@@ -701,6 +713,10 @@ class V4L2UI:
         
         curses.noecho()
         curses.curs_set(0)
+        
+        # Restore nodelay mode for progressive increment
+        self.stdscr.nodelay(True)
+        self.stdscr.timeout(50)
     
     def load_preset(self):
         """Load control values from a preset file"""
