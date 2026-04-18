@@ -571,6 +571,10 @@ class V4L2UI:
         """Device selection menu"""
         selected = 0
         
+        # Set blocking mode for device selection
+        self.stdscr.nodelay(False)
+        self.stdscr.timeout(-1)
+        
         while True:
             self.stdscr.clear()
             height, width = self.stdscr.getmaxyx()
@@ -665,6 +669,9 @@ class V4L2UI:
                 break
             elif key == ord('d') or key == ord('D'):
                 if self.select_device():
+                    # Restore nodelay mode after device selection
+                    self.stdscr.nodelay(True)
+                    self.stdscr.timeout(50)
                     self.draw_control_screen()
                     continue
                 else:
