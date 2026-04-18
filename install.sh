@@ -59,18 +59,31 @@ echo ""
 echo "Installing files..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ -f "$SCRIPT_DIR/v4l2_control.py" ]; then
-    cp "$SCRIPT_DIR/v4l2_control.py" "$INSTALL_DIR/"
-    chmod +x "$INSTALL_DIR/v4l2_control.py"
-    echo "✓ Copied v4l2_control.py"
+# Check if we're already in the install directory
+if [ "$SCRIPT_DIR" = "$INSTALL_DIR" ]; then
+    echo "✓ Already running from install directory ($INSTALL_DIR)"
+    if [ -f "$INSTALL_DIR/v4l2_control.py" ]; then
+        chmod +x "$INSTALL_DIR/v4l2_control.py"
+        echo "✓ Set executable permissions on v4l2_control.py"
+    else
+        echo "ERROR: v4l2_control.py not found in $INSTALL_DIR"
+        exit 1
+    fi
 else
-    echo "ERROR: v4l2_control.py not found in $SCRIPT_DIR"
-    exit 1
-fi
+    # Copy files from source to install directory
+    if [ -f "$SCRIPT_DIR/v4l2_control.py" ]; then
+        cp "$SCRIPT_DIR/v4l2_control.py" "$INSTALL_DIR/"
+        chmod +x "$INSTALL_DIR/v4l2_control.py"
+        echo "✓ Copied v4l2_control.py"
+    else
+        echo "ERROR: v4l2_control.py not found in $SCRIPT_DIR"
+        exit 1
+    fi
 
-if [ -f "$SCRIPT_DIR/README.md" ]; then
-    cp "$SCRIPT_DIR/README.md" "$INSTALL_DIR/"
-    echo "✓ Copied README.md"
+    if [ -f "$SCRIPT_DIR/README.md" ]; then
+        cp "$SCRIPT_DIR/README.md" "$INSTALL_DIR/"
+        echo "✓ Copied README.md"
+    fi
 fi
 
 # Create launcher script in .local/bin
